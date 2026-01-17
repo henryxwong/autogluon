@@ -106,9 +106,9 @@ class TotoModel(AbstractTimeSeriesModel):
         return model
 
     def _is_gpu_available(self) -> bool:
-        import torch.cuda
-
-        return torch.cuda.is_available()
+        """Check if any GPU backend (CUDA/ROCm, XPU, or MPS) is available."""
+        from autogluon.timeseries.utils.device_utils import is_gpu_available
+        return is_gpu_available()
 
     def get_minimum_resources(self, is_gpu_available: bool = False) -> dict[str, int | float]:
         return {"num_cpus": 1, "num_gpus": 1}
@@ -120,15 +120,28 @@ class TotoModel(AbstractTimeSeriesModel):
         if not self._is_gpu_available():
             raise RuntimeError(
                 f"{self.name} requires a GPU to run, but no GPU was detected. "
-                "Please make sure that you are using a computer with a CUDA-compatible GPU and "
-                "`import torch; torch.cuda.is_available()` returns `True`."
+                "Please ensure you have a compatible GPU (NVIDIA CUDA, AMD ROCm, Intel XPU, or Apple MPS)."
             )
 
+        # Use multi-backend device detection
+        from autogluon.timeseries.utils.device_utils import get_device
+        
         hyperparameters = self.get_hyperparameters()
+        
+        # Determine device to use
+        if hyperparameters["device"] is not None:
+            try:
+                device = get_device(preferred_backend=hyperparameters["device"])
+            except ValueError as e:
+                logger.warning(f"Specified device '{hyperparameters['device']}' not available: {e}. Using auto-detected device.")
+                device = get_device()
+        else:
+            device = get_device()
+        
         pretrained_model = TotoPretrainedModel.from_pretrained(
             model_id=self.model_path,
             config=TotoConfig.from_pretrained(self.model_path),
-            device_map=hyperparameters["device"],
+            device_map=device,
         )
 
         if hyperparameters["compile_model"]:
@@ -145,7 +158,7 @@ class TotoModel(AbstractTimeSeriesModel):
         return {
             "batch_size": 24,
             "num_samples": 256,
-            "device": "cuda",
+            "device": None,  # Auto-detect best available device
             "context_length": 4096,
             "compile_model": False,
         }

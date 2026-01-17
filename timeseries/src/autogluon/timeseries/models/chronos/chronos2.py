@@ -274,15 +274,23 @@ class Chronos2Model(AbstractTimeSeriesModel):
 
     def load_model_pipeline(self):
         from chronos.chronos2.pipeline import Chronos2Pipeline
+        from autogluon.timeseries.utils.device_utils import get_device, supports_mem_get_info
 
-        device = (self.get_hyperparameter("device") or "cuda") if self._is_gpu_available() else "cpu"
+        device = get_device(self.get_hyperparameter("device")) if self._is_gpu_available() else "cpu"
+        if supports_mem_get_info(device):
+            device_map = device
+        else:
+            device_map = None  # Load to CPU to avoid memory query/warmup issues
 
         assert self.model_path is not None
         pipeline = Chronos2Pipeline.from_pretrained(
             self.model_path,
-            device_map=device,
+            device_map=device_map,
             revision=self.get_hyperparameter("revision"),
         )
+
+        if device_map is None and device != "cpu":
+            pipeline.model.to(device)  # Move after loading (tokenizer/processor stay on CPU)
 
         self._model_pipeline = pipeline
 
@@ -390,6 +398,6 @@ class Chronos2Model(AbstractTimeSeriesModel):
         }
 
     def _is_gpu_available(self) -> bool:
-        import torch.cuda
-
-        return torch.cuda.is_available()
+        """Check if any GPU backend (CUDA/ROCm, XPU, or MPS) is available."""
+        from autogluon.timeseries.utils.device_utils import is_gpu_available
+        return is_gpu_available()

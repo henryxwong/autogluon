@@ -253,9 +253,9 @@ class ChronosModel(AbstractTimeSeriesModel):
         return model
 
     def _is_gpu_available(self) -> bool:
-        import torch.cuda
-
-        return torch.cuda.is_available()
+        """Check if any GPU backend (CUDA/ROCm, XPU, or MPS) is available."""
+        from autogluon.timeseries.utils.device_utils import is_gpu_available
+        return is_gpu_available()
 
     @property
     def model_pipeline(self) -> Any:  # of type BaseChronosPipeline
@@ -314,7 +314,20 @@ class ChronosModel(AbstractTimeSeriesModel):
                 "`import torch; torch.cuda.is_available()` returns `True`."
             )
 
-        device = (self.device or "cuda") if gpu_available else "cpu"
+        # Use multi-backend device detection
+        from autogluon.timeseries.utils.device_utils import get_device
+        
+        if self.device is not None:
+            # User specified a device, validate it
+            try:
+                detected_device = get_device(preferred_backend=self.device)
+                device = detected_device
+            except ValueError as e:
+                logger.warning(f"Specified device '{self.device}' not available: {e}. Using auto-detected device.")
+                device = get_device()
+        else:
+            # Auto-detect best available device
+            device = get_device() if gpu_available else "cpu"
 
         assert self.model_path is not None
         pipeline = BaseChronosPipeline.from_pretrained(
@@ -332,9 +345,21 @@ class ChronosModel(AbstractTimeSeriesModel):
         return self
 
     def _has_tf32(self):
-        import torch.cuda
-
-        return torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
+        """Check if TF32 support is available (CUDA/ROCm only)."""
+        import torch
+        from autogluon.timeseries.utils.device_utils import get_device
+        
+        device_type = get_device()
+        # TF32 is only supported on CUDA/ROCm with compute capability >= 8.0
+        if device_type == "cuda":
+            try:
+                return torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
+            except Exception:
+                # If we can't check device capability, assume TF32 is not available
+                return False
+        else:
+            # TF32 is not supported on MPS, XPU, or CPU
+            return False
 
     def get_hyperparameters(self) -> dict:
         """Gets params that are passed to the inner model."""
