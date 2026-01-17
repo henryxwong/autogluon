@@ -258,14 +258,18 @@ class AbstractGluonTSModel(AbstractTimeSeriesModel):
             "default_root_dir": self.path,
         }
 
-        if self._is_gpu_available():
-            default_trainer_kwargs["accelerator"] = "gpu"
+        # Use multi-backend device detection
+        from autogluon.timeseries.utils.device_utils import get_device, get_lightning_accelerator
+        
+        device_type = get_device()
+        default_trainer_kwargs["accelerator"] = get_lightning_accelerator(device_type)
+        
+        # Set devices based on accelerator type
+        if device_type != "cpu":
             default_trainer_kwargs["devices"] = 1
-        else:
-            default_trainer_kwargs["accelerator"] = "cpu"
 
         default_trainer_kwargs.update(init_args.pop("trainer_kwargs", {}))
-        logger.debug(f"\tTraining on device '{default_trainer_kwargs['accelerator']}'")
+        logger.debug(f"\tTraining on device '{device_type}' with accelerator '{default_trainer_kwargs['accelerator']}'")
 
         return from_hyperparameters(
             self._get_estimator_class(),
@@ -274,9 +278,9 @@ class AbstractGluonTSModel(AbstractTimeSeriesModel):
         )
 
     def _is_gpu_available(self) -> bool:
-        import torch.cuda
-
-        return torch.cuda.is_available()
+        """Check if any GPU backend (CUDA/ROCm, XPU, or MPS) is available."""
+        from autogluon.timeseries.utils.device_utils import is_gpu_available
+        return is_gpu_available()
 
     def get_minimum_resources(self, is_gpu_available: bool = False) -> dict[str, int | float]:
         minimum_resources: dict[str, int | float] = {"num_cpus": 1}
